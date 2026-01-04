@@ -1,6 +1,7 @@
 """Core contest state transitions (pure, no FastAPI/DB)."""
 from __future__ import annotations
 
+from copy import deepcopy
 from dataclasses import dataclass
 from typing import Any, Dict, List, Tuple
 
@@ -82,93 +83,93 @@ def _normalize_competitors(competitors: List[dict] | None) -> List[dict]:
     return normalized
 
 
-def apply_command(state: Dict[str, Any], cmd: Dict[str, Any]) -> CommandOutcome:
+def _apply_transition(state: Dict[str, Any], cmd: Dict[str, Any]) -> CommandOutcome:
     """
-    Apply a contest command to in-memory state (pure core, no I/O).
-    Returns updated state + command payload for echo.
+    Pure transition: works on a copy of the provided state and returns new state + payload.
     """
-
+    # Work on a copy to keep transitions pure and deterministic for the same input.
+    new_state: Dict[str, Any] = deepcopy(state)
     ctype = cmd.get("type")
     snapshot_required = False
     payload = dict(cmd)
 
     if ctype == "INIT_ROUTE":
-        state["boxVersion"] = state.get("boxVersion", 0) + 1
-        payload["sessionId"] = state.get("sessionId")
-        state["initiated"] = True
-        state["holdsCount"] = cmd.get("holdsCount") or 0
-        state["routeIndex"] = cmd.get("routeIndex") or 1
+        new_state["boxVersion"] = new_state.get("boxVersion", 0) + 1
+        payload["sessionId"] = new_state.get("sessionId")
+        new_state["initiated"] = True
+        new_state["holdsCount"] = cmd.get("holdsCount") or 0
+        new_state["routeIndex"] = cmd.get("routeIndex") or 1
 
         competitors = _normalize_competitors(cmd.get("competitors"))
-        state["competitors"] = competitors
-        state["currentClimber"] = competitors[0]["nume"] if competitors else ""
+        new_state["competitors"] = competitors
+        new_state["currentClimber"] = competitors[0]["nume"] if competitors else ""
 
-        state["started"] = False
-        state["timerState"] = "idle"
-        state["holdCount"] = 0.0
-        state["lastRegisteredTime"] = None
-        state["remaining"] = None
+        new_state["started"] = False
+        new_state["timerState"] = "idle"
+        new_state["holdCount"] = 0.0
+        new_state["lastRegisteredTime"] = None
+        new_state["remaining"] = None
 
         if cmd.get("categorie"):
-            state["categorie"] = cmd["categorie"]
+            new_state["categorie"] = cmd["categorie"]
         if cmd.get("timerPreset"):
-            state["timerPreset"] = cmd["timerPreset"]
-            state["timerPresetSec"] = parse_timer_preset(cmd.get("timerPreset"))
+            new_state["timerPreset"] = cmd["timerPreset"]
+            new_state["timerPresetSec"] = parse_timer_preset(cmd.get("timerPreset"))
 
         snapshot_required = True
 
     elif ctype == "START_TIMER":
-        state["started"] = True
-        state["timerState"] = "running"
-        state["lastRegisteredTime"] = None
-        state["remaining"] = None
+        new_state["started"] = True
+        new_state["timerState"] = "running"
+        new_state["lastRegisteredTime"] = None
+        new_state["remaining"] = None
         snapshot_required = True
 
     elif ctype == "STOP_TIMER":
-        state["started"] = False
-        state["timerState"] = "paused"
+        new_state["started"] = False
+        new_state["timerState"] = "paused"
         snapshot_required = True
 
     elif ctype == "RESUME_TIMER":
-        state["started"] = True
-        state["timerState"] = "running"
-        state["lastRegisteredTime"] = None
+        new_state["started"] = True
+        new_state["timerState"] = "running"
+        new_state["lastRegisteredTime"] = None
         snapshot_required = True
 
     elif ctype == "PROGRESS_UPDATE":
         delta = cmd.get("delta") or 1
         new_count = (
-            (int(state.get("holdCount", 0)) + 1)
+            (int(new_state.get("holdCount", 0)) + 1)
             if delta == 1
-            else round(state.get("holdCount", 0) + delta, 1)
+            else round(new_state.get("holdCount", 0) + delta, 1)
         )
         if new_count < 0:
             new_count = 0.0
-        max_holds = state.get("holdsCount") or 0
+        max_holds = new_state.get("holdsCount") or 0
         if isinstance(max_holds, int) and max_holds > 0 and new_count > max_holds:
             new_count = float(max_holds)
-        state["holdCount"] = new_count
+        new_state["holdCount"] = new_count
         snapshot_required = True
 
     elif ctype == "REGISTER_TIME":
         if cmd.get("registeredTime") is not None:
-            state["lastRegisteredTime"] = cmd.get("registeredTime")
+            new_state["lastRegisteredTime"] = cmd.get("registeredTime")
         snapshot_required = True
 
     elif ctype == "TIMER_SYNC":
-        state["remaining"] = cmd.get("remaining")
+        new_state["remaining"] = cmd.get("remaining")
 
     elif ctype == "SUBMIT_SCORE":
         effective_time = cmd.get("registeredTime")
         if effective_time is None:
-            effective_time = state.get("lastRegisteredTime")
+            effective_time = new_state.get("lastRegisteredTime")
         payload["registeredTime"] = effective_time
 
         competitor_name = cmd.get("competitor")
-        route_idx = max((state.get("routeIndex") or 1) - 1, 0)
+        route_idx = max((new_state.get("routeIndex") or 1) - 1, 0)
         if competitor_name:
-            scores = state.get("scores") or {}
-            times = state.get("times") or {}
+            scores = new_state.get("scores") or {}
+            times = new_state.get("times") or {}
             if cmd.get("score") is not None:
                 arr = scores.get(competitor_name) or []
                 while len(arr) <= route_idx:
@@ -181,16 +182,16 @@ def apply_command(state: Dict[str, Any], cmd: Dict[str, Any]) -> CommandOutcome:
                     tarr.append(None)
                 tarr[route_idx] = effective_time
                 times[competitor_name] = tarr
-            state["scores"] = scores
-            state["times"] = times
+            new_state["scores"] = scores
+            new_state["times"] = times
 
-        state["started"] = False
-        state["timerState"] = "idle"
-        state["holdCount"] = 0.0
-        state["lastRegisteredTime"] = effective_time
-        state["remaining"] = None
+        new_state["started"] = False
+        new_state["timerState"] = "idle"
+        new_state["holdCount"] = 0.0
+        new_state["lastRegisteredTime"] = effective_time
+        new_state["remaining"] = None
 
-        competitors = state.get("competitors") or []
+        competitors = new_state.get("competitors") or []
         if competitors:
             for comp in competitors:
                 if not isinstance(comp, dict):
@@ -206,27 +207,43 @@ def apply_command(state: Dict[str, Any], cmd: Dict[str, Any]) -> CommandOutcome:
                 ),
                 "",
             )
-            state["currentClimber"] = next_comp
+            new_state["currentClimber"] = next_comp
         snapshot_required = True
 
     elif ctype == "RESET_BOX":
         import uuid
 
-        state["initiated"] = False
-        state["currentClimber"] = ""
-        state["started"] = False
-        state["timerState"] = "idle"
-        state["holdCount"] = 0.0
-        state["lastRegisteredTime"] = None
-        state["remaining"] = None
-        state["competitors"] = []
-        state["categorie"] = ""
-        state["timerPreset"] = None
-        state["timerPresetSec"] = None
-        state["sessionId"] = str(uuid.uuid4())
+        new_state["initiated"] = False
+        new_state["currentClimber"] = ""
+        new_state["started"] = False
+        new_state["timerState"] = "idle"
+        new_state["holdCount"] = 0.0
+        new_state["lastRegisteredTime"] = None
+        new_state["remaining"] = None
+        new_state["competitors"] = []
+        new_state["categorie"] = ""
+        new_state["timerPreset"] = None
+        new_state["timerPresetSec"] = None
+        new_state["sessionId"] = str(uuid.uuid4())
         snapshot_required = True
 
-    return CommandOutcome(state=state, cmd_payload=payload, snapshot_required=snapshot_required)
+    return CommandOutcome(
+        state=new_state, cmd_payload=payload, snapshot_required=snapshot_required
+    )
+
+
+def apply_command(state: Dict[str, Any], cmd: Dict[str, Any]) -> CommandOutcome:
+    """
+    Apply a contest command to in-memory state.
+    Returns updated state + command payload for echo.
+    """
+    outcome = _apply_transition(state, cmd)
+
+    # Preserve backward compatibility for callers that expect in-place mutation.
+    state.clear()
+    state.update(outcome.state)
+
+    return outcome
 
 
 def validate_session_and_version(

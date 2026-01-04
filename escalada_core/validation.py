@@ -240,6 +240,9 @@ class ValidatedCmd(BaseModel):
                         f'competitor {i} "nume" contains dangerous pattern: {pattern}'
                     )
 
+            # Normalize using shared sanitizer to keep rules consistent across CORE
+            competitor["nume"] = InputSanitizer.sanitize_competitor_name(name)
+
         return v
 
     @model_validator(mode="after")
