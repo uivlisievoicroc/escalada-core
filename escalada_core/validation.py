@@ -17,10 +17,8 @@ logger = logging.getLogger(__name__)
 class ValidatedCmd(BaseModel):
     """Enhanced Cmd model with comprehensive validation"""
 
-    # Accept -1 as sentinel for global commands (e.g., SET_TIME_CRITERION)
-    boxId: int = Field(
-        ..., ge=-1, le=9999, description="Box ID (-1 for global, 0-9999 for boxes)"
-    )
+    # Box ID for per-box commands
+    boxId: int = Field(..., ge=0, le=9999, description="Box ID (0-9999 for boxes)")
     type: str = Field(..., min_length=1, max_length=50, description="Command type")
 
     # Generic optional fields with validation

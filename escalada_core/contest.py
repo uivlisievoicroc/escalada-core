@@ -43,6 +43,7 @@ def default_state(session_id: str | None = None) -> Dict[str, Any]:
         "remaining": None,
         "timerPreset": None,
         "timerPresetSec": None,
+        "timeCriterionEnabled": False,
         "sessionId": session_id or str(uuid.uuid4()),
         "boxVersion": 0,
     }
@@ -210,6 +211,11 @@ def _apply_transition(state: Dict[str, Any], cmd: Dict[str, Any]) -> CommandOutc
             new_state["currentClimber"] = next_comp
         snapshot_required = True
 
+    elif ctype == "SET_TIME_CRITERION":
+        if cmd.get("timeCriterionEnabled") is not None:
+            new_state["timeCriterionEnabled"] = bool(cmd.get("timeCriterionEnabled"))
+        snapshot_required = True
+
     elif ctype == "RESET_BOX":
         import uuid
 
@@ -278,12 +284,14 @@ def validate_session_and_version(
 
 
 def toggle_time_criterion(
-    current_value: bool, enabled: bool | None
+    current_value: bool, enabled: bool | None, box_id: int | None = None
 ) -> Tuple[bool, Dict[str, Any]]:
     """Pure helper to compute new time criterion flag and payload."""
     new_value = bool(enabled)
     payload = {
-        "type": "TIME_CRITERION",
+        "type": "SET_TIME_CRITERION",
         "timeCriterionEnabled": new_value,
     }
+    if box_id is not None:
+        payload["boxId"] = box_id
     return new_value, payload

@@ -132,7 +132,7 @@ def test_toggle_time_criterion_returns_payload():
 
     new_value, payload = toggle_time_criterion(False, True)
     assert new_value is True
-    assert payload["type"] == "TIME_CRITERION"
+    assert payload["type"] == "SET_TIME_CRITERION"
     assert payload["timeCriterionEnabled"] is True
 
 
