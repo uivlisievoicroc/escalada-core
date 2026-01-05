@@ -40,6 +40,12 @@ class ValidatedCmd(BaseModel):
     holdsCount: Optional[int] = Field(
         None, ge=0, le=100, description="Hold count (0-100)"
     )
+    routesCount: Optional[int] = Field(
+        None, gt=0, le=999, description="Total routes count (1-999)"
+    )
+    holdsCounts: Optional[List[int]] = Field(
+        None, description="Hold counts per route"
+    )
     competitors: Optional[List[Dict]] = Field(None, description="Competitors list")
     categorie: Optional[str] = Field(None, max_length=100, description="Category name")
     timerPreset: Optional[str] = Field(
@@ -242,6 +248,23 @@ class ValidatedCmd(BaseModel):
             competitor["nume"] = InputSanitizer.sanitize_competitor_name(name)
 
         return v
+
+    @field_validator("holdsCounts")
+    @classmethod
+    def validate_holds_counts(cls, v: Optional[List[int]]) -> Optional[List[int]]:
+        """Validate holdsCounts list format"""
+        if v is None:
+            return v
+        if not isinstance(v, list):
+            raise ValueError("holdsCounts must be a list")
+        cleaned: List[int] = []
+        for i, value in enumerate(v):
+            if not isinstance(value, (int, float)):
+                raise ValueError(f"holdsCounts[{i}] must be a number")
+            if value < 0:
+                raise ValueError(f"holdsCounts[{i}] cannot be negative")
+            cleaned.append(int(value))
+        return cleaned
 
     @model_validator(mode="after")
     def validate_command_fields(self) -> Self:

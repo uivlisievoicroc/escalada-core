@@ -37,6 +37,8 @@ def default_state(session_id: str | None = None) -> Dict[str, Any]:
         "timerState": "idle",
         "holdCount": 0.0,
         "routeIndex": 1,
+        "routesCount": 1,
+        "holdsCounts": [],
         "competitors": [],
         "categorie": "",
         "lastRegisteredTime": None,
@@ -100,6 +102,10 @@ def _apply_transition(state: Dict[str, Any], cmd: Dict[str, Any]) -> CommandOutc
         new_state["initiated"] = True
         new_state["holdsCount"] = cmd.get("holdsCount") or 0
         new_state["routeIndex"] = cmd.get("routeIndex") or 1
+        if cmd.get("routesCount") is not None:
+            new_state["routesCount"] = cmd.get("routesCount")
+        if cmd.get("holdsCounts") is not None:
+            new_state["holdsCounts"] = cmd.get("holdsCounts")
 
         competitors = _normalize_competitors(cmd.get("competitors"))
         new_state["competitors"] = competitors
@@ -226,6 +232,8 @@ def _apply_transition(state: Dict[str, Any], cmd: Dict[str, Any]) -> CommandOutc
         new_state["holdCount"] = 0.0
         new_state["lastRegisteredTime"] = None
         new_state["remaining"] = None
+        new_state["routesCount"] = 1
+        new_state["holdsCounts"] = []
         new_state["competitors"] = []
         new_state["categorie"] = ""
         new_state["timerPreset"] = None
