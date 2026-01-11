@@ -166,3 +166,47 @@ def test_full_contest_flow_sequence():
     outcome = apply_command(state, {"type": "RESET_BOX"})
     assert outcome.state["initiated"] is False
     assert outcome.state["competitors"] == []
+
+
+def test_init_route_preserves_scores_for_next_route_and_clears_on_route_1():
+    state = default_state("sid-multi")
+    apply_command(
+        state,
+        {
+            "type": "INIT_ROUTE",
+            "boxId": 1,
+            "routeIndex": 1,
+            "holdsCount": 3,
+            "competitors": [{"nume": "A"}, {"nume": "B"}],
+        },
+    )
+    apply_command(
+        state,
+        {"type": "SUBMIT_SCORE", "competitor": "A", "score": 7, "registeredTime": 12.0},
+    )
+    assert state["scores"]["A"][0] == 7
+
+    apply_command(
+        state,
+        {
+            "type": "INIT_ROUTE",
+            "boxId": 1,
+            "routeIndex": 2,
+            "holdsCount": 4,
+            "competitors": [{"nume": "A", "marked": False}, {"nume": "B", "marked": False}],
+        },
+    )
+    assert state["scores"]["A"][0] == 7
+
+    apply_command(
+        state,
+        {
+            "type": "INIT_ROUTE",
+            "boxId": 1,
+            "routeIndex": 1,
+            "holdsCount": 3,
+            "competitors": [{"nume": "A"}, {"nume": "B"}],
+        },
+    )
+    assert state["scores"] == {}
+    assert state["times"] == {}

@@ -33,6 +33,7 @@ def default_state(session_id: str | None = None) -> Dict[str, Any]:
         "initiated": False,
         "holdsCount": 0,
         "currentClimber": "",
+        "preparingClimber": "",
         "started": False,
         "timerState": "idle",
         "holdCount": 0.0,
@@ -77,13 +78,50 @@ def _normalize_competitors(competitors: List[dict] | None) -> List[dict]:
             if not safe_name:
                 continue
             marked_val = comp.get("marked", False)
-            marked_bool = (
-                bool(marked_val) if isinstance(marked_val, (bool, int, str)) else False
-            )
+            if isinstance(marked_val, bool):
+                marked_bool = marked_val
+            elif isinstance(marked_val, (int, float)):
+                marked_bool = bool(int(marked_val))
+            elif isinstance(marked_val, str):
+                lowered = marked_val.strip().lower()
+                if lowered in {"1", "true", "yes", "y", "on"}:
+                    marked_bool = True
+                elif lowered in {"0", "false", "no", "n", "off", ""}:
+                    marked_bool = False
+                else:
+                    marked_bool = False
+            else:
+                marked_bool = False
             normalized.append({"nume": safe_name, "marked": marked_bool})
         except Exception:
             continue
     return normalized
+
+
+def _compute_preparing_climber(competitors: List[dict], current_climber: str) -> str:
+    """
+    Match ContestPage behavior: "preparing" is the next competitor after the active climber,
+    based on the competitors order. We optionally skip already-marked competitors.
+    """
+    if not competitors or not current_climber:
+        return ""
+    current_idx = None
+    for i, comp in enumerate(competitors):
+        if isinstance(comp, dict) and comp.get("nume") == current_climber:
+            current_idx = i
+            break
+    if current_idx is None:
+        return ""
+    for comp in competitors[current_idx + 1 :]:
+        if not isinstance(comp, dict):
+            continue
+        name = comp.get("nume")
+        if not isinstance(name, str) or not name.strip():
+            continue
+        if comp.get("marked"):
+            continue
+        return name
+    return ""
 
 
 def _apply_transition(state: Dict[str, Any], cmd: Dict[str, Any]) -> CommandOutcome:
@@ -100,8 +138,9 @@ def _apply_transition(state: Dict[str, Any], cmd: Dict[str, Any]) -> CommandOutc
         new_state["boxVersion"] = new_state.get("boxVersion", 0) + 1
         payload["sessionId"] = new_state.get("sessionId")
         new_state["initiated"] = True
+        incoming_route_index = cmd.get("routeIndex") or 1
         new_state["holdsCount"] = cmd.get("holdsCount") or 0
-        new_state["routeIndex"] = cmd.get("routeIndex") or 1
+        new_state["routeIndex"] = incoming_route_index
         if cmd.get("routesCount") is not None:
             new_state["routesCount"] = cmd.get("routesCount")
         if cmd.get("holdsCounts") is not None:
@@ -110,12 +149,25 @@ def _apply_transition(state: Dict[str, Any], cmd: Dict[str, Any]) -> CommandOutc
         competitors = _normalize_competitors(cmd.get("competitors"))
         new_state["competitors"] = competitors
         new_state["currentClimber"] = competitors[0]["nume"] if competitors else ""
+        new_state["preparingClimber"] = (
+            competitors[1]["nume"] if len(competitors) > 1 else ""
+        )
 
         new_state["started"] = False
         new_state["timerState"] = "idle"
         new_state["holdCount"] = 0.0
         new_state["lastRegisteredTime"] = None
         new_state["remaining"] = None
+        # Clear previous contest results only when starting a fresh contest in this box.
+        # For multi-route contests, INIT_ROUTE for routeIndex > 1 must preserve prior route scores/times.
+        if incoming_route_index == 1:
+            new_state["scores"] = {}
+            new_state["times"] = {}
+        else:
+            if not isinstance(new_state.get("scores"), dict):
+                new_state["scores"] = {}
+            if not isinstance(new_state.get("times"), dict):
+                new_state["times"] = {}
 
         if cmd.get("categorie"):
             new_state["categorie"] = cmd["categorie"]
@@ -173,6 +225,7 @@ def _apply_transition(state: Dict[str, Any], cmd: Dict[str, Any]) -> CommandOutc
         payload["registeredTime"] = effective_time
 
         competitor_name = cmd.get("competitor")
+        active_name = new_state.get("currentClimber") or ""
         route_idx = max((new_state.get("routeIndex") or 1) - 1, 0)
         if competitor_name:
             scores = new_state.get("scores") or {}
@@ -206,15 +259,13 @@ def _apply_transition(state: Dict[str, Any], cmd: Dict[str, Any]) -> CommandOutc
                 if comp.get("nume") == competitor_name:
                     comp["marked"] = True
                     break
-            next_comp = next(
-                (
-                    c.get("nume")
-                    for c in competitors
-                    if isinstance(c, dict) and not c.get("marked")
-                ),
-                "",
+            # Advance only when we submit the active climber (matches ContestPage behavior).
+            if competitor_name and competitor_name == active_name:
+                next_active = _compute_preparing_climber(competitors, active_name)
+                new_state["currentClimber"] = next_active
+            new_state["preparingClimber"] = _compute_preparing_climber(
+                competitors, new_state.get("currentClimber") or ""
             )
-            new_state["currentClimber"] = next_comp
         snapshot_required = True
 
     elif ctype == "SET_TIME_CRITERION":
@@ -227,11 +278,14 @@ def _apply_transition(state: Dict[str, Any], cmd: Dict[str, Any]) -> CommandOutc
 
         new_state["initiated"] = False
         new_state["currentClimber"] = ""
+        new_state["preparingClimber"] = ""
         new_state["started"] = False
         new_state["timerState"] = "idle"
         new_state["holdCount"] = 0.0
         new_state["lastRegisteredTime"] = None
         new_state["remaining"] = None
+        new_state["scores"] = {}
+        new_state["times"] = {}
         new_state["routesCount"] = 1
         new_state["holdsCounts"] = []
         new_state["competitors"] = []
