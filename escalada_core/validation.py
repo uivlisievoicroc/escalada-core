@@ -73,6 +73,7 @@ class ValidatedCmd(BaseModel):
 
     # For SUBMIT_SCORE (competitor index)
     competitorIdx: Optional[int] = Field(None, ge=0, le=1000)
+    idx: Optional[int] = Field(None, ge=0, le=1000)
 
     # Session token to prevent state bleed between box deletions
     sessionId: Optional[str] = Field(
@@ -283,8 +284,12 @@ class ValidatedCmd(BaseModel):
                 raise ValueError("PROGRESS_UPDATE requires delta")
 
         elif cmd_type == "SUBMIT_SCORE":
-            if self.competitor is None and self.competitorIdx is None:
-                raise ValueError("SUBMIT_SCORE requires competitor or competitorIdx")
+            if (
+                self.competitor is None
+                and self.competitorIdx is None
+                and self.idx is None
+            ):
+                raise ValueError("SUBMIT_SCORE requires competitor, competitorIdx, or idx")
 
         elif cmd_type == "REGISTER_TIME":
             if self.registeredTime is None and self.time is None:

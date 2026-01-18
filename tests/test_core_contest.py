@@ -1,4 +1,5 @@
 from escalada_core import apply_command, default_state, parse_timer_preset
+from escalada_core.validation import ValidatedCmd
 
 
 def test_default_state_has_session_and_defaults():
@@ -37,6 +38,21 @@ def test_init_route_sets_competitors_and_timer():
     assert outcome.state["currentClimber"] == "Alex"
     assert outcome.state["timerPresetSec"] == 300
     assert outcome.cmd_payload["sessionId"] == state["sessionId"]
+
+def test_init_route_preserves_competitor_club():
+    state = default_state("sid-club")
+    apply_command(
+        state,
+        {
+            "type": "INIT_ROUTE",
+            "boxId": 1,
+            "routeIndex": 1,
+            "holdsCount": 5,
+            "competitors": [{"nume": "Alex", "club": "CSM", "marked": False}],
+        },
+    )
+    assert state["competitors"][0]["nume"] == "Alex"
+    assert state["competitors"][0]["club"] == "CSM"
 
 
 def test_progress_update_respects_bounds():
@@ -161,7 +177,7 @@ def test_full_contest_flow_sequence():
     assert state["started"] is False
     assert state["currentClimber"] == "B"
     assert state["scores"]["A"][0] == 7
-    assert state["times"]["A"][0] == 12.0
+    assert state["times"]["A"][0] == 12
 
     outcome = apply_command(state, {"type": "RESET_BOX"})
     assert outcome.state["initiated"] is False
@@ -210,3 +226,97 @@ def test_init_route_preserves_scores_for_next_route_and_clears_on_route_1():
     )
     assert state["scores"] == {}
     assert state["times"] == {}
+
+
+def test_validation_accepts_submit_score_idx_alias():
+    cmd = ValidatedCmd(boxId=1, type="SUBMIT_SCORE", idx=0, score=5.0)
+    assert cmd.idx == 0
+    assert cmd.competitor is None
+    assert cmd.competitorIdx is None
+
+
+def test_last_registered_time_none_or_invalid_does_not_crash():
+    state = default_state("sid-lrt")
+    apply_command(
+        state,
+        {
+            "type": "INIT_ROUTE",
+            "boxId": 1,
+            "routeIndex": 1,
+            "holdsCount": 3,
+            "competitors": [{"nume": "A"}],
+        },
+    )
+    apply_command(state, {"type": "REGISTER_TIME", "registeredTime": "abc"})
+    outcome = apply_command(
+        state, {"type": "SUBMIT_SCORE", "competitor": "A", "score": 6}
+    )
+    assert outcome.snapshot_required
+    assert outcome.state["lastRegisteredTime"] is None
+    assert outcome.state["times"] == {}
+
+
+def test_register_time_preserves_float_and_ignores_none():
+    state = default_state("sid-rt")
+    apply_command(
+        state,
+        {
+            "type": "INIT_ROUTE",
+            "boxId": 1,
+            "routeIndex": 1,
+            "holdsCount": 3,
+            "competitors": [{"nume": "A"}],
+        },
+    )
+    apply_command(state, {"type": "REGISTER_TIME", "registeredTime": 15.5})
+    assert state["lastRegisteredTime"] == 15.5
+    apply_command(state, {"type": "REGISTER_TIME", "registeredTime": None})
+    assert state["lastRegisteredTime"] == 15.5
+
+
+def test_submit_score_accepts_idx_zero():
+    state = default_state("sid-idx-0")
+    apply_command(
+        state,
+        {
+            "type": "INIT_ROUTE",
+            "boxId": 1,
+            "routeIndex": 1,
+            "holdsCount": 4,
+            "competitors": [{"nume": "A"}, {"nume": "B"}],
+        },
+    )
+    outcome = apply_command(
+        state, {"type": "SUBMIT_SCORE", "idx": 0, "score": 8, "registeredTime": 15.9}
+    )
+    assert outcome.state["scores"]["A"][0] == 8
+    assert outcome.state["times"]["A"][0] == 15.9
+    assert outcome.state["currentClimber"] == "B"
+    assert outcome.state["competitors"][0]["marked"] is True
+
+
+def test_submit_score_ignores_empty_idx_when_competitor_present():
+    state = default_state("sid-idx-empty")
+    apply_command(
+        state,
+        {
+            "type": "INIT_ROUTE",
+            "boxId": 1,
+            "routeIndex": 1,
+            "holdsCount": 3,
+            "competitors": [{"nume": "A"}, {"nume": "B"}],
+        },
+    )
+    outcome = apply_command(
+        state,
+        {
+            "type": "SUBMIT_SCORE",
+            "idx": None,
+            "competitor": "A",
+            "score": 9.1,
+            "registeredTime": 11.7,
+        },
+    )
+    assert outcome.state["scores"]["A"][0] == 9.1
+    assert outcome.state["times"]["A"][0] == 11.7
+    assert outcome.state["currentClimber"] == "B"

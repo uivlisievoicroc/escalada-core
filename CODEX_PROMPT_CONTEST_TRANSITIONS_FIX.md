@@ -30,14 +30,7 @@ Acest task cere fixuri strict în core (fără FastAPI/UI).
 
 Nu folosi `or` când `0` este valoare validă.
 
-### 2) `PROGRESS_SCORE`: calcul robust + clamp minim
-- Citește `holdCount` defensiv:
-  - dacă lipsește sau e `None` → tratează ca `0.0`;
-  - dacă e non-numeric → normalizează la `0.0` sau aruncă eroare (dar consistent cu restul proiectului).
-- Aplică delta/step conform logicii existente (nu schimba step-ul, nu schimba UX).
-- Dacă există decrement, clamp minim la `0.0` (nu impune minim `1`).
-
-### 3) `lastRegisteredTime`: helper de coerciție + utilizare
+### 2) `lastRegisteredTime`: helper de coerciție + utilizare
 Adaugă un helper local în `contest.py` (fără dependențe) care:
 - primește `None` → returnează `None`
 - primește `int` → returnează `int`
@@ -48,7 +41,7 @@ Adaugă un helper local în `contest.py` (fără dependențe) care:
 Apoi, oriunde se compară/folosește `lastRegisteredTime`, convertește prin helper și:
 - dacă rezultatul e `None`, evită comparații/actualizări care ar crăpa.
 
-### 4) `SUBMIT_SCORE` cu `idx`: contract recomandat (acceptă și validează)
+### 3) `SUBMIT_SCORE` cu `idx`: contract recomandat (acceptă și validează)
 **Recomandare:** acceptă `idx` ca index competitor **0-based** și validează strict:
 - dacă `idx` este prezent:
   - trebuie să fie `int` (sau string numeric convertibil) și `0 <= idx < len(competitors)`;
@@ -57,6 +50,13 @@ Apoi, oriunde se compară/folosește `lastRegisteredTime`, convertește prin hel
   - păstrează comportamentul existent (competitorul curent / următorul nemarcat etc.).
 - dacă `idx` este invalid:
   - ridică `ValueError` clar (sau folosește mecanismul de erori deja folosit în proiect) — fără no-op distructiv.
+
+### 4) [Coada] `PROGRESS_SCORE`: calcul robust + clamp minim (implementare separata)
+- Citește `holdCount` defensiv:
+  - dacă lipsește sau e `None` → tratează ca `0.0`;
+  - dacă e non-numeric → normalizează la `0.0` sau aruncă eroare (dar consistent cu restul proiectului).
+- Aplică delta/step conform logicii existente (nu schimba step-ul, nu schimba UX).
+- Dacă există decrement, clamp minim la `0.0` (nu impune minim `1`).
 
 ## Criteria de acceptare
 1) `holdCount=0.0` + `PROGRESS_SCORE` nu devine `1` doar fiindcă e falsy.
