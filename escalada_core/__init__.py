@@ -7,10 +7,14 @@ from .contest import (
     toggle_time_criterion,
     validate_session_and_version,
 )
+from .types import CommandPayload, Competitor, ContestState
 from .validation import InputSanitizer, RateLimitConfig, ValidatedCmd
 
 __all__ = [
     "CommandOutcome",
+    "CommandPayload",
+    "Competitor",
+    "ContestState",
     "ValidationError",
     "apply_command",
     "default_state",
