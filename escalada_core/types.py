@@ -37,6 +37,8 @@ class ContestState(TypedDict, total=False):
     timerPreset: Optional[str]  # e.g., "05:00"
     timerPresetSec: Optional[int]  # e.g., 300
     remaining: Optional[float]  # Seconds remaining
+    timerRemainingSec: Optional[float]  # Server-side remaining (authoritative)
+    timerEndsAtMs: Optional[int]  # Epoch ms when timer reaches 0
     started: bool
     
     # Current climber progress

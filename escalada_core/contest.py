@@ -47,6 +47,8 @@ def default_state(session_id: str | None = None) -> Dict[str, Any]:
         "remaining": None,
         "timerPreset": None,
         "timerPresetSec": None,
+        "timerRemainingSec": None,
+        "timerEndsAtMs": None,
         "timeCriterionEnabled": False,
         "sessionId": session_id or str(uuid.uuid4()),
         "boxVersion": 0,
