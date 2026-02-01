@@ -103,6 +103,7 @@ class ValidatedCmd(BaseModel):
             "TIMER_SYNC",
             "ACTIVE_CLIMBER",
             "RESET_BOX",
+            "RESET_PARTIAL",
         }
         if v not in allowed_types:
             raise ValueError(f"type must be one of {allowed_types}, got {v}")
@@ -328,6 +329,7 @@ class RateLimitConfig:
         "SET_TIME_CRITERION": 10,
         "REGISTER_TIME": 30,
         "TIMER_SYNC": 60,
+        "RESET_PARTIAL": 10,
     }
 
 

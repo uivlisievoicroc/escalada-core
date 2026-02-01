@@ -361,6 +361,58 @@ def _apply_transition(state: Dict[str, Any], cmd: Dict[str, Any]) -> CommandOutc
             new_state["timeCriterionEnabled"] = bool(cmd.get("timeCriterionEnabled"))
         snapshot_required = True
 
+    elif ctype == "RESET_PARTIAL":
+        reset_timer = bool(cmd.get("resetTimer"))
+        clear_progress = bool(cmd.get("clearProgress"))
+        unmark_all = bool(cmd.get("unmarkAll"))
+
+        # If we "restart" the competition (unmark all), we also reset progress + timer state
+        # to ensure the box flow starts cleanly from the first competitor.
+        if unmark_all:
+            reset_timer = True
+            clear_progress = True
+
+            # Keep config (categorie/routes/holdsCounts/competitors), but restart flow.
+            new_state["routeIndex"] = 1
+            holds_counts = new_state.get("holdsCounts")
+            if isinstance(holds_counts, list) and holds_counts:
+                first_holds = holds_counts[0]
+                if isinstance(first_holds, int):
+                    new_state["holdsCount"] = first_holds
+
+            new_state["scores"] = {}
+            new_state["times"] = {}
+            new_state["lastRegisteredTime"] = None
+
+            competitors = new_state.get("competitors")
+            if isinstance(competitors, list):
+                first_name = ""
+                for comp in competitors:
+                    if not isinstance(comp, dict):
+                        continue
+                    comp["marked"] = False
+                    if not first_name:
+                        name = comp.get("nume")
+                        if isinstance(name, str) and name.strip():
+                            first_name = name
+                new_state["currentClimber"] = first_name or ""
+                new_state["preparingClimber"] = _compute_preparing_climber(
+                    competitors, new_state.get("currentClimber") or ""
+                )
+            else:
+                new_state["currentClimber"] = ""
+                new_state["preparingClimber"] = ""
+
+        if reset_timer:
+            new_state["started"] = False
+            new_state["timerState"] = "idle"
+            new_state["remaining"] = None
+
+        if clear_progress:
+            new_state["holdCount"] = 0.0
+
+        snapshot_required = True
+
     elif ctype == "RESET_BOX":
         import uuid
 

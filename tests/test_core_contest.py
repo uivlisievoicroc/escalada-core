@@ -115,6 +115,48 @@ def test_reset_box_generates_new_session_and_clears_state():
     assert outcome.state["timerPreset"] is None
 
 
+def test_reset_partial_unmark_all_restarts_box_competition():
+    state = default_state("sid-rp")
+    state.update(
+        {
+            "initiated": True,
+            "categorie": "Cat",
+            "routesCount": 2,
+            "holdsCounts": [10, 12],
+            "routeIndex": 2,
+            "holdsCount": 12,
+            "timerPresetSec": 60,
+            "timerState": "running",
+            "started": True,
+            "remaining": 12.0,
+            "holdCount": 5.0,
+            "lastRegisteredTime": 33.3,
+            "scores": {"Alex": [1, 2]},
+            "times": {"Alex": [None, 10.0]},
+            "competitors": [{"nume": "Alex", "marked": True}, {"nume": "Bob", "marked": True}],
+            "currentClimber": "Bob",
+            "preparingClimber": "",
+        }
+    )
+
+    outcome = apply_command(state, {"type": "RESET_PARTIAL", "boxId": 1, "unmarkAll": True})
+    st = outcome.state
+
+    assert st["initiated"] is True
+    assert st["routeIndex"] == 1
+    assert st["holdsCount"] == 10
+    assert st["timerState"] == "idle"
+    assert st["started"] is False
+    assert st.get("remaining") is None
+    assert st["holdCount"] == 0.0
+    assert st.get("lastRegisteredTime") is None
+    assert st.get("scores") == {}
+    assert st.get("times") == {}
+    assert st["currentClimber"] == "Alex"
+    assert st["preparingClimber"] == "Bob"
+    assert all((isinstance(c, dict) and c.get("marked") is False) for c in st.get("competitors") or [])
+
+
 def test_validation_checks_session_and_version():
     from escalada_core import validate_session_and_version
 
