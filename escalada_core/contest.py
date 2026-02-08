@@ -1,4 +1,34 @@
-"""Core contest state transitions (pure, no FastAPI/DB)."""
+"""Core contest state transitions (pure, no FastAPI/DB).
+
+This module implements the pure business logic for Escalada climbing competitions.
+All functions are deterministic and side-effect free (no I/O, no database, no HTTP).
+
+Architecture:
+- State is a plain dict with keys like sessionId, boxVersion, currentClimber, holdCount, etc.
+- Commands are plain dicts with a 'type' field (INIT_ROUTE, START_TIMER, SUBMIT_SCORE, etc.)
+- apply_command() takes (state, cmd) and returns CommandOutcome with updated state
+- Mutations are performed on a deepcopy to preserve functional purity
+- Parent (escalada-api) receives CommandOutcome and persists/broadcasts as needed
+
+Key concepts:
+- sessionId: UUID generated on INIT_ROUTE; used to detect stale commands from old tabs
+- boxVersion: Monotonic counter incremented on state changes; prevents race conditions
+- holdCount: Float to support half-holds (e.g., 5.5 for 5 full + 1 bonus hold)
+- marked: Boolean per competitor indicating they've been scored (used for queue advancement)
+- timerState: 'idle' | 'running' | 'paused' (server-side timer added 2026-01-25)
+
+Validation:
+- validate_session_and_version() checks sessionId + boxVersion before applying command
+- Returns ValidationError(kind='stale_session'|'stale_version') if rejected
+- Input sanitization via InputSanitizer (max lengths, control char stripping)
+
+State transitions:
+- INIT_ROUTE: Starts a new route, resets queue, preserves multi-route scores
+- PROGRESS_UPDATE: Increments holdCount (supports +1 or +0.1 for half-holds)
+- SUBMIT_SCORE: Marks competitor as done, advances queue, stores score + optional time
+- RESET_PARTIAL: Allows selective reset (timer/progress/unmark) without full restart
+- RESET_BOX: Full reset to default_state() with new sessionId
+"""
 from __future__ import annotations
 
 import math
@@ -28,6 +58,26 @@ class ValidationError:
 
 
 def default_state(session_id: str | None = None) -> Dict[str, Any]:
+    """Create a fresh contest state with default values.
+    
+    Args:
+        session_id: Optional UUID string; generated if not provided
+        
+    Returns:
+        Dict with keys:
+        - initiated: False until INIT_ROUTE called
+        - holdsCount: Total holds on current route (int)
+        - holdCount: Current progress (float, supports 0.5 increments)
+        - currentClimber: Name of active competitor
+        - preparingClimber: Next competitor in queue (skips marked)
+        - timerState: 'idle' | 'running' | 'paused'
+        - routeIndex: 1-based current route number
+        - routesCount: Total routes in contest
+        - competitors: List of {nume, marked, club?} dicts
+        - sessionId: UUID to detect stale commands
+        - boxVersion: Monotonic counter (incremented on INIT_ROUTE, SUBMIT_SCORE, etc.)
+        - scores/times: Dicts mapping competitor names to arrays (one entry per route)
+    """
     import uuid
 
     return {
@@ -56,6 +106,20 @@ def default_state(session_id: str | None = None) -> Dict[str, Any]:
 
 
 def parse_timer_preset(preset: str | None) -> int | None:
+    """Parse timer preset string (MM:SS format) to total seconds.
+    
+    Args:
+        preset: String like "05:00" or "3:30"
+        
+    Returns:
+        Total seconds as int, or None if parsing fails
+        
+    Examples:
+        - "05:00" → 300
+        - "3:30" → 210
+        - "" → None
+        - "invalid" → None
+    """
     if not preset:
         return None
     try:
@@ -109,6 +173,24 @@ def _coerce_idx(value: Any) -> int | None:
 
 
 def _normalize_competitors(competitors: List[dict] | None) -> List[dict]:
+    """Sanitize and normalize competitor list from client input.
+    
+    Args:
+        competitors: List of dicts with 'nume' (name), optional 'club', 'marked' fields
+        
+    Returns:
+        List of normalized dicts with:
+        - nume: Sanitized name (max 255 chars, no control chars)
+        - marked: Boolean (default False)
+        - club: Optional sanitized club name
+        
+    Behavior:
+        - Skips entries with missing/invalid 'nume'
+        - Sanitizes names via InputSanitizer (prevents XSS, length limits)
+        - Coerces 'marked' to bool (handles string/int/bool inputs)
+        - Preserves 'club' field if present and non-empty
+        - Skips malformed entries (returns only valid competitors)
+    """
     normalized: List[dict] = []
     if not competitors:
         return normalized
@@ -156,9 +238,23 @@ def _normalize_competitors(competitors: List[dict] | None) -> List[dict]:
 
 
 def _compute_preparing_climber(competitors: List[dict], current_climber: str) -> str:
-    """
+    """Find the next competitor in queue after the current climber.
+    
     Match ContestPage behavior: "preparing" is the next competitor after the active climber,
-    based on the competitors order. We optionally skip already-marked competitors.
+    based on the competitors order. Skips already-marked (scored) competitors.
+    
+    Args:
+        competitors: List of competitor dicts with 'nume' and 'marked' fields
+        current_climber: Name of the currently active competitor
+        
+    Returns:
+        Name of next unmarked competitor, or empty string if none found
+        
+    Logic:
+        1. Find index of current_climber in competitors list
+        2. Iterate through remaining competitors after current index
+        3. Return first competitor where marked=False
+        4. Return "" if no unmarked competitors remain (contest finished)
     """
     if not competitors or not current_climber:
         return ""
@@ -182,8 +278,32 @@ def _compute_preparing_climber(competitors: List[dict], current_climber: str) ->
 
 
 def _apply_transition(state: Dict[str, Any], cmd: Dict[str, Any]) -> CommandOutcome:
-    """
-    Pure transition: works on a copy of the provided state and returns new state + payload.
+    """Apply pure state transition without side effects.
+    
+    Pure transition: works on a deepcopy of the provided state and returns new state + payload.
+    Parent (escalada-api) is responsible for persistence and broadcasting.
+    
+    Args:
+        state: Current contest state dict (not mutated)
+        cmd: Command dict with 'type' field and command-specific params
+        
+    Returns:
+        CommandOutcome with:
+        - state: Updated state dict (deepcopy with changes applied)
+        - cmd_payload: Enriched command (adds resolved fields like competitor names)
+        - snapshot_required: True if this change should trigger persistence/broadcast
+        
+    Command types:
+        - INIT_ROUTE: Start new route, reset queue, normalize competitors
+        - START_TIMER/STOP_TIMER/RESUME_TIMER: Control timer state
+        - PROGRESS_UPDATE: Increment holdCount (supports +1 or +0.1)
+        - SUBMIT_SCORE: Mark competitor done, advance queue, store score + time
+        - REGISTER_TIME: Store lastRegisteredTime for tiebreaking
+        - TIMER_SYNC: Update remaining time (server-side ticker)
+        - SET_TIMER_PRESET: Change timer duration
+        - SET_TIME_CRITERION: Toggle time tiebreak mode
+        - RESET_PARTIAL: Selective reset (timer/progress/unmark)
+        - RESET_BOX: Full reset to default state
     """
     # Work on a copy to keep transitions pure and deterministic for the same input.
     new_state: Dict[str, Any] = deepcopy(state)
@@ -215,8 +335,10 @@ def _apply_transition(state: Dict[str, Any], cmd: Dict[str, Any]) -> CommandOutc
         new_state["holdCount"] = 0.0
         new_state["lastRegisteredTime"] = None
         new_state["remaining"] = None
-        # Clear previous contest results only when starting a fresh contest in this box.
-        # For multi-route contests, INIT_ROUTE for routeIndex > 1 must preserve prior route scores/times.
+        # Score preservation logic for multi-route contests:
+        # - routeIndex == 1: Fresh contest start, clear all scores/times
+        # - routeIndex > 1: Preserve scores/times from previous routes (arrays indexed by route)
+        # This allows contestants to accumulate scores across multiple routes (e.g., 3 routes → 3 scores per competitor)
         if incoming_route_index == 1:
             new_state["scores"] = {}
             new_state["times"] = {}
@@ -253,12 +375,15 @@ def _apply_transition(state: Dict[str, Any], cmd: Dict[str, Any]) -> CommandOutc
         snapshot_required = True
 
     elif ctype == "PROGRESS_UPDATE":
+        # Increment hold count by delta (1 for full hold, 0.1 for half-hold bonus)
         delta = cmd.get("delta") or 1
+        # Integer path for +1 (common case), float path for fractional increments
         new_count = (
             (int(new_state.get("holdCount", 0)) + 1)
             if delta == 1
             else round(new_state.get("holdCount", 0) + delta, 1)
         )
+        # Clamp to valid range [0, holdsCount]
         if new_count < 0:
             new_count = 0.0
         max_holds = new_state.get("holdsCount") or 0
@@ -277,13 +402,27 @@ def _apply_transition(state: Dict[str, Any], cmd: Dict[str, Any]) -> CommandOutc
     elif ctype == "TIMER_SYNC":
         new_state["remaining"] = cmd.get("remaining")
 
+    elif ctype == "SET_TIMER_PRESET":
+        preset = cmd.get("timerPreset")
+        if preset is not None:
+            new_state["timerPreset"] = preset
+            new_state["timerPresetSec"] = parse_timer_preset(preset)
+            # Legacy (client-driven timer): if timer isn't actively in use, reflect preset immediately.
+            timer_state = new_state.get("timerState") or "idle"
+            if timer_state not in {"running", "paused"}:
+                preset_sec = new_state.get("timerPresetSec")
+                new_state["remaining"] = float(preset_sec) if isinstance(preset_sec, int) else None
+        snapshot_required = True
+
     elif ctype == "SUBMIT_SCORE":
+        # Resolve registeredTime: use command value if present, else fall back to lastRegisteredTime
         raw_time = cmd.get("registeredTime")
         if raw_time is None:
             raw_time = new_state.get("lastRegisteredTime")
         effective_time = _coerce_optional_time(raw_time)
         payload["registeredTime"] = effective_time
 
+        # Competitor resolution: support both 'idx' (legacy) and 'competitorIdx' (new) for backward compat
         competitors = new_state.get("competitors") or []
         idx = None
         if "idx" in cmd:
@@ -341,13 +480,15 @@ def _apply_transition(state: Dict[str, Any], cmd: Dict[str, Any]) -> CommandOutc
         new_state["remaining"] = None
 
         if competitors:
+            # Mark the scored competitor as done (prevents re-queuing)
             for comp in competitors:
                 if not isinstance(comp, dict):
                     continue
                 if comp.get("nume") == competitor_name:
                     comp["marked"] = True
                     break
-            # Advance only when we submit the active climber (matches ContestPage behavior).
+            # Queue advancement logic: only advance to next competitor when scoring the currently active one
+            # This allows admins to retrospectively fix scores for previous competitors without breaking queue order
             if competitor_name and competitor_name == active_name:
                 next_active = _compute_preparing_climber(competitors, active_name)
                 new_state["currentClimber"] = next_active
@@ -362,12 +503,13 @@ def _apply_transition(state: Dict[str, Any], cmd: Dict[str, Any]) -> CommandOutc
         snapshot_required = True
 
     elif ctype == "RESET_PARTIAL":
+        # Selective reset: allows admin to reset specific aspects without full RESET_BOX
         reset_timer = bool(cmd.get("resetTimer"))
         clear_progress = bool(cmd.get("clearProgress"))
         unmark_all = bool(cmd.get("unmarkAll"))
 
-        # If we "restart" the competition (unmark all), we also reset progress + timer state
-        # to ensure the box flow starts cleanly from the first competitor.
+        # Cascade rule: unmark_all implies reset_timer + clear_progress
+        # Rationale: restarting competition from scratch requires clean state (no timer running, no holds counted)
         if unmark_all:
             reset_timer = True
             clear_progress = True
@@ -441,9 +583,19 @@ def _apply_transition(state: Dict[str, Any], cmd: Dict[str, Any]) -> CommandOutc
 
 
 def apply_command(state: Dict[str, Any], cmd: Dict[str, Any]) -> CommandOutcome:
-    """
-    Apply a contest command to in-memory state.
-    Returns updated state + command payload for echo.
+    """Apply a contest command to in-memory state.
+    
+    Args:
+        state: Current contest state dict (will be mutated for backward compatibility)
+        cmd: Command dict with 'type' field and command-specific params
+        
+    Returns:
+        CommandOutcome with updated state, enriched command payload, and snapshot flag
+        
+    Backward compatibility note:
+        - Internally uses _apply_transition which works on a deepcopy (pure)
+        - Mutates input state dict by clearing and updating with new values
+        - New callers should prefer consuming CommandOutcome.state instead of relying on mutation
     """
     outcome = _apply_transition(state, cmd)
 
@@ -460,9 +612,28 @@ def validate_session_and_version(
     *,
     require_session: bool = True,
 ) -> ValidationError | None:
-    """
+    """Validate command against current state to prevent stale/conflicting updates.
+    
     Pure validation for sessionId and boxVersion against current state.
     Returns ValidationError if rejected, otherwise None.
+    
+    Args:
+        state: Current contest state dict
+        cmd: Incoming command dict
+        require_session: If True, reject commands without sessionId (except INIT_ROUTE)
+        
+    Returns:
+        ValidationError if command is stale/invalid, None if valid
+        
+    Validation rules:
+        1. sessionId mismatch → stale_session (command from old/different contest)
+        2. boxVersion < current → stale_version (command based on outdated state)
+        3. Missing sessionId when required → missing_session (malformed command)
+        
+    Use case:
+        Prevents race conditions when multiple tabs/judges send commands simultaneously.
+        Example: Tab A submits score (boxVersion=5), Tab B (still on boxVersion=3) tries
+        to submit → rejected as stale_version, forcing Tab B to refresh state first.
     """
     current_session = state.get("sessionId")
     incoming_session = cmd.get("sessionId")

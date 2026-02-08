@@ -98,6 +98,7 @@ class ValidatedCmd(BaseModel):
             "SUBMIT_SCORE",
             "INIT_ROUTE",
             "REQUEST_STATE",
+            "SET_TIMER_PRESET",
             "SET_TIME_CRITERION",
             "REGISTER_TIME",
             "TIMER_SYNC",
@@ -305,6 +306,10 @@ class ValidatedCmd(BaseModel):
             if self.timeCriterionEnabled is None:
                 raise ValueError("SET_TIME_CRITERION requires timeCriterionEnabled")
 
+        elif cmd_type == "SET_TIMER_PRESET":
+            if self.timerPreset is None:
+                raise ValueError("SET_TIMER_PRESET requires timerPreset")
+
         return self
 
     # legacy alias for registeredTime
@@ -329,6 +334,7 @@ class RateLimitConfig:
         "SET_TIME_CRITERION": 10,
         "REGISTER_TIME": 30,
         "TIMER_SYNC": 60,
+        "SET_TIMER_PRESET": 10,
         "RESET_PARTIAL": 10,
     }
 
