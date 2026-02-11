@@ -60,6 +60,11 @@ class ValidatedCmd(BaseModel):
     # Time criterion
     timeCriterionEnabled: Optional[bool] = None
 
+    # RESET_PARTIAL fields (checkbox-driven selective reset)
+    resetTimer: Optional[bool] = None
+    clearProgress: Optional[bool] = None
+    unmarkAll: Optional[bool] = None
+
     # STATE_SNAPSHOT fields (for REQUEST_STATE response)
     initiated: Optional[bool] = None
     holdsCount_snap: Optional[int] = Field(None, alias="holdsCount", ge=0, le=100)

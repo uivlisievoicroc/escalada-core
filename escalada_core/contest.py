@@ -514,7 +514,13 @@ def _apply_transition(state: Dict[str, Any], cmd: Dict[str, Any]) -> CommandOutc
             reset_timer = True
             clear_progress = True
 
-            # Keep config (categorie/routes/holdsCounts/competitors), but restart flow.
+            # "Restart from first" should bring the box back to the *pre-init* state:
+            # - the operator must press INIT_ROUTE again to (re)start the route flow
+            # - stale Judge tabs must not be able to continue sending commands
+            import uuid
+
+            new_state["initiated"] = False
+            new_state["sessionId"] = str(uuid.uuid4())
             new_state["routeIndex"] = 1
             holds_counts = new_state.get("holdsCounts")
             if isinstance(holds_counts, list) and holds_counts:
@@ -528,19 +534,13 @@ def _apply_transition(state: Dict[str, Any], cmd: Dict[str, Any]) -> CommandOutc
 
             competitors = new_state.get("competitors")
             if isinstance(competitors, list):
-                first_name = ""
                 for comp in competitors:
                     if not isinstance(comp, dict):
                         continue
                     comp["marked"] = False
-                    if not first_name:
-                        name = comp.get("nume")
-                        if isinstance(name, str) and name.strip():
-                            first_name = name
-                new_state["currentClimber"] = first_name or ""
-                new_state["preparingClimber"] = _compute_preparing_climber(
-                    competitors, new_state.get("currentClimber") or ""
-                )
+                # Pre-init state does not have an active queue/climber.
+                new_state["currentClimber"] = ""
+                new_state["preparingClimber"] = ""
             else:
                 new_state["currentClimber"] = ""
                 new_state["preparingClimber"] = ""
@@ -548,7 +548,17 @@ def _apply_transition(state: Dict[str, Any], cmd: Dict[str, Any]) -> CommandOutc
         if reset_timer:
             new_state["started"] = False
             new_state["timerState"] = "idle"
-            new_state["remaining"] = None
+            # Reset remaining time back to the full preset.
+            # This must work even if the timer was running (stop first, then reset),
+            # and even in legacy mode where the backend doesn't compute `remaining`.
+            preset_sec = new_state.get("timerPresetSec")
+            if preset_sec is None:
+                preset_sec = parse_timer_preset(new_state.get("timerPreset"))
+            new_state["remaining"] = (
+                float(preset_sec) if isinstance(preset_sec, (int, float)) else None
+            )
+            # Resetting the timer for the current attempt also clears any pending/registered time tiebreak value.
+            new_state["lastRegisteredTime"] = None
 
         if clear_progress:
             new_state["holdCount"] = 0.0
