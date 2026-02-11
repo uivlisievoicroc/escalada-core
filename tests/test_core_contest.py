@@ -117,6 +117,7 @@ def test_reset_box_generates_new_session_and_clears_state():
 
 def test_reset_partial_unmark_all_restarts_box_competition():
     state = default_state("sid-rp")
+    old_session = state["sessionId"]
     state.update(
         {
             "initiated": True,
@@ -142,18 +143,19 @@ def test_reset_partial_unmark_all_restarts_box_competition():
     outcome = apply_command(state, {"type": "RESET_PARTIAL", "boxId": 1, "unmarkAll": True})
     st = outcome.state
 
-    assert st["initiated"] is True
+    assert st["initiated"] is False
+    assert st["sessionId"] != old_session
     assert st["routeIndex"] == 1
     assert st["holdsCount"] == 10
     assert st["timerState"] == "idle"
     assert st["started"] is False
-    assert st.get("remaining") is None
+    assert st.get("remaining") == 60.0
     assert st["holdCount"] == 0.0
     assert st.get("lastRegisteredTime") is None
     assert st.get("scores") == {}
     assert st.get("times") == {}
-    assert st["currentClimber"] == "Alex"
-    assert st["preparingClimber"] == "Bob"
+    assert st["currentClimber"] == ""
+    assert st["preparingClimber"] == ""
     assert all((isinstance(c, dict) and c.get("marked") is False) for c in st.get("competitors") or [])
 
 
