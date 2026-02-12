@@ -59,6 +59,27 @@ class ValidatedCmd(BaseModel):
 
     # Time criterion
     timeCriterionEnabled: Optional[bool] = None
+    # Time tiebreak decision
+    timeTiebreakDecision: Optional[str] = Field(
+        None, description="'yes' or 'no' for manual top-3 time tiebreak decision"
+    )
+    timeTiebreakFingerprint: Optional[str] = Field(
+        None, min_length=1, max_length=256, description="Deterministic fingerprint for tie event"
+    )
+    # Previous-rounds tiebreak decision
+    prevRoundsTiebreakDecision: Optional[str] = Field(
+        None, description="'yes' or 'no' for manual top-3 previous-rounds tiebreak decision"
+    )
+    prevRoundsTiebreakFingerprint: Optional[str] = Field(
+        None, min_length=1, max_length=256, description="Deterministic fingerprint for tie event"
+    )
+    prevRoundsTiebreakOrder: Optional[List[str]] = Field(
+        None, description="Optional ordered competitor names for previous-rounds tiebreak"
+    )
+    prevRoundsTiebreakRanksByName: Optional[Dict[str, int]] = Field(
+        None,
+        description="Optional previous-rounds rank map keyed by competitor name; lower rank is better",
+    )
 
     # RESET_PARTIAL fields (checkbox-driven selective reset)
     resetTimer: Optional[bool] = None
@@ -105,6 +126,8 @@ class ValidatedCmd(BaseModel):
             "REQUEST_STATE",
             "SET_TIMER_PRESET",
             "SET_TIME_CRITERION",
+            "SET_TIME_TIEBREAK_DECISION",
+            "SET_PREV_ROUNDS_TIEBREAK_DECISION",
             "REGISTER_TIME",
             "TIMER_SYNC",
             "ACTIVE_CLIMBER",
@@ -178,6 +201,38 @@ class ValidatedCmd(BaseModel):
         if len(v) == 0:
             raise ValueError("categorie cannot be empty")
         return v
+
+    @field_validator("timeTiebreakDecision")
+    @classmethod
+    def validate_time_tiebreak_decision(cls, v: Optional[str]) -> Optional[str]:
+        if v is None:
+            return v
+        normalized = v.strip().lower()
+        if normalized not in {"yes", "no"}:
+            raise ValueError("timeTiebreakDecision must be 'yes' or 'no'")
+        return normalized
+
+    @field_validator("prevRoundsTiebreakRanksByName")
+    @classmethod
+    def validate_prev_rounds_ranks_map(
+        cls, v: Optional[Dict[str, int]]
+    ) -> Optional[Dict[str, int]]:
+        if v is None:
+            return v
+        if not isinstance(v, dict):
+            raise ValueError("prevRoundsTiebreakRanksByName must be an object")
+        if not v:
+            raise ValueError("prevRoundsTiebreakRanksByName cannot be empty")
+        cleaned: Dict[str, int] = {}
+        for raw_name, raw_rank in v.items():
+            if not isinstance(raw_name, str) or not raw_name.strip():
+                raise ValueError("prevRoundsTiebreakRanksByName contains invalid competitor name")
+            if isinstance(raw_rank, bool) or not isinstance(raw_rank, int) or raw_rank <= 0:
+                raise ValueError(
+                    f"prevRoundsTiebreakRanksByName[{raw_name!r}] must be a positive integer"
+                )
+            cleaned[raw_name.strip()] = int(raw_rank)
+        return cleaned
 
     @field_validator("timerPreset")
     @classmethod
@@ -311,6 +366,39 @@ class ValidatedCmd(BaseModel):
             if self.timeCriterionEnabled is None:
                 raise ValueError("SET_TIME_CRITERION requires timeCriterionEnabled")
 
+        elif cmd_type == "SET_TIME_TIEBREAK_DECISION":
+            if self.timeTiebreakDecision is None:
+                raise ValueError(
+                    "SET_TIME_TIEBREAK_DECISION requires timeTiebreakDecision"
+                )
+            if self.timeTiebreakFingerprint is None:
+                raise ValueError(
+                    "SET_TIME_TIEBREAK_DECISION requires timeTiebreakFingerprint"
+                )
+        elif cmd_type == "SET_PREV_ROUNDS_TIEBREAK_DECISION":
+            if self.prevRoundsTiebreakDecision is None:
+                raise ValueError(
+                    "SET_PREV_ROUNDS_TIEBREAK_DECISION requires prevRoundsTiebreakDecision"
+                )
+            if self.prevRoundsTiebreakFingerprint is None:
+                raise ValueError(
+                    "SET_PREV_ROUNDS_TIEBREAK_DECISION requires prevRoundsTiebreakFingerprint"
+                )
+            if (
+                self.prevRoundsTiebreakOrder is not None
+                and not isinstance(self.prevRoundsTiebreakOrder, list)
+            ):
+                raise ValueError(
+                    "SET_PREV_ROUNDS_TIEBREAK_DECISION prevRoundsTiebreakOrder must be a list"
+                )
+            if (
+                self.prevRoundsTiebreakRanksByName is not None
+                and not isinstance(self.prevRoundsTiebreakRanksByName, dict)
+            ):
+                raise ValueError(
+                    "SET_PREV_ROUNDS_TIEBREAK_DECISION prevRoundsTiebreakRanksByName must be an object"
+                )
+
         elif cmd_type == "SET_TIMER_PRESET":
             if self.timerPreset is None:
                 raise ValueError("SET_TIMER_PRESET requires timerPreset")
@@ -337,6 +425,8 @@ class RateLimitConfig:
         "INIT_ROUTE": 10,
         "REQUEST_STATE": 30,
         "SET_TIME_CRITERION": 10,
+        "SET_TIME_TIEBREAK_DECISION": 30,
+        "SET_PREV_ROUNDS_TIEBREAK_DECISION": 30,
         "REGISTER_TIME": 30,
         "TIMER_SYNC": 60,
         "SET_TIMER_PRESET": 10,

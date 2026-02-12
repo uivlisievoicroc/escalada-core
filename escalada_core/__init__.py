@@ -9,6 +9,17 @@ from .contest import (
 )
 from .types import CommandPayload, Competitor, ContestState
 from .validation import InputSanitizer, RateLimitConfig, ValidatedCmd
+from .lead_ranking import (
+    Athlete,
+    LeadResult,
+    TieContext,
+    TieBreakDecision,
+    TieBreakResolver,
+    RankingRow,
+    TieEvent,
+    RankingResult,
+    compute_lead_ranking,
+)
 
 __all__ = [
     "CommandOutcome",
@@ -24,4 +35,13 @@ __all__ = [
     "ValidatedCmd",
     "RateLimitConfig",
     "InputSanitizer",
+    "Athlete",
+    "LeadResult",
+    "TieContext",
+    "TieBreakDecision",
+    "TieBreakResolver",
+    "RankingRow",
+    "TieEvent",
+    "RankingResult",
+    "compute_lead_ranking",
 ]

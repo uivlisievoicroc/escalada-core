@@ -52,6 +52,27 @@ class ContestState(TypedDict, total=False):
     
     # Time criterion (for ranking tiebreaks)
     timeCriterionEnabled: bool
+    # Last user preference for top-3 time tiebreak ("yes" | "no"), if any.
+    timeTiebreakPreference: Optional[str]
+    # Fingerprint of the currently resolved eligible-tie event.
+    timeTiebreakResolvedFingerprint: Optional[str]
+    # Decision applied to the resolved fingerprint ("yes" | "no").
+    timeTiebreakResolvedDecision: Optional[str]
+    # Per-event decisions keyed by tie fingerprint ("tb3:...": "yes" | "no").
+    timeTiebreakDecisions: dict[str, str]
+    # Last user preference for previous-rounds tiebreak ("yes" | "no"), if any.
+    prevRoundsTiebreakPreference: Optional[str]
+    # Fingerprint of the currently resolved previous-rounds eligible-tie event.
+    prevRoundsTiebreakResolvedFingerprint: Optional[str]
+    # Decision applied to the resolved fingerprint ("yes" | "no").
+    prevRoundsTiebreakResolvedDecision: Optional[str]
+    # Per-event previous-rounds decisions keyed by tie fingerprint ("tb3:...": "yes" | "no").
+    prevRoundsTiebreakDecisions: dict[str, str]
+    # Manual winner/order keyed by tie fingerprint; used when previous-rounds decision is "yes".
+    prevRoundsTiebreakOrders: dict[str, list[str]]
+    # Manual previous-rounds rank map keyed by tie fingerprint.
+    # Example: {"tb3:...": {"A": 1, "B": 2, "C": 2}}
+    prevRoundsTiebreakRanks: dict[str, dict[str, int]]
 
 
 class CommandPayload(TypedDict, total=False):
@@ -88,6 +109,14 @@ class CommandPayload(TypedDict, total=False):
     
     # SET_TIME_CRITERION
     timeCriterionEnabled: Optional[bool]
+    # SET_TIME_TIEBREAK_DECISION
+    timeTiebreakDecision: Optional[str]
+    timeTiebreakFingerprint: Optional[str]
+    # SET_PREV_ROUNDS_TIEBREAK_DECISION
+    prevRoundsTiebreakDecision: Optional[str]
+    prevRoundsTiebreakFingerprint: Optional[str]
+    prevRoundsTiebreakOrder: Optional[List[str]]
+    prevRoundsTiebreakRanksByName: Optional[dict[str, int]]
     
     # TIMER_SYNC
     remaining: Optional[float]

@@ -100,6 +100,16 @@ def default_state(session_id: str | None = None) -> Dict[str, Any]:
         "timerRemainingSec": None,
         "timerEndsAtMs": None,
         "timeCriterionEnabled": False,
+        "timeTiebreakPreference": None,
+        "timeTiebreakResolvedFingerprint": None,
+        "timeTiebreakResolvedDecision": None,
+        "timeTiebreakDecisions": {},
+        "prevRoundsTiebreakPreference": None,
+        "prevRoundsTiebreakResolvedFingerprint": None,
+        "prevRoundsTiebreakResolvedDecision": None,
+        "prevRoundsTiebreakDecisions": {},
+        "prevRoundsTiebreakOrders": {},
+        "prevRoundsTiebreakRanks": {},
         "sessionId": session_id or str(uuid.uuid4()),
         "boxVersion": 0,
     }
@@ -302,6 +312,7 @@ def _apply_transition(state: Dict[str, Any], cmd: Dict[str, Any]) -> CommandOutc
         - TIMER_SYNC: Update remaining time (server-side ticker)
         - SET_TIMER_PRESET: Change timer duration
         - SET_TIME_CRITERION: Toggle time tiebreak mode
+        - SET_TIME_TIEBREAK_DECISION: Persist manual tie decision for current tie fingerprint
         - RESET_PARTIAL: Selective reset (timer/progress/unmark)
         - RESET_BOX: Full reset to default state
     """
@@ -342,6 +353,14 @@ def _apply_transition(state: Dict[str, Any], cmd: Dict[str, Any]) -> CommandOutc
         if incoming_route_index == 1:
             new_state["scores"] = {}
             new_state["times"] = {}
+            new_state["timeTiebreakDecisions"] = {}
+            new_state["timeTiebreakResolvedFingerprint"] = None
+            new_state["timeTiebreakResolvedDecision"] = None
+            new_state["prevRoundsTiebreakDecisions"] = {}
+            new_state["prevRoundsTiebreakOrders"] = {}
+            new_state["prevRoundsTiebreakRanks"] = {}
+            new_state["prevRoundsTiebreakResolvedFingerprint"] = None
+            new_state["prevRoundsTiebreakResolvedDecision"] = None
         else:
             if not isinstance(new_state.get("scores"), dict):
                 new_state["scores"] = {}
@@ -502,6 +521,110 @@ def _apply_transition(state: Dict[str, Any], cmd: Dict[str, Any]) -> CommandOutc
             new_state["timeCriterionEnabled"] = bool(cmd.get("timeCriterionEnabled"))
         snapshot_required = True
 
+    elif ctype == "SET_TIME_TIEBREAK_DECISION":
+        decision = cmd.get("timeTiebreakDecision")
+        fingerprint = cmd.get("timeTiebreakFingerprint")
+        if decision not in {"yes", "no"}:
+            raise ValueError(
+                "SET_TIME_TIEBREAK_DECISION requires timeTiebreakDecision in {'yes','no'}"
+            )
+        if not isinstance(fingerprint, str) or not fingerprint.strip():
+            raise ValueError(
+                "SET_TIME_TIEBREAK_DECISION requires non-empty timeTiebreakFingerprint"
+            )
+        normalized_fingerprint = fingerprint.strip()
+        decisions = new_state.get("timeTiebreakDecisions")
+        if not isinstance(decisions, dict):
+            decisions = {}
+        decisions[normalized_fingerprint] = decision
+        new_state["timeTiebreakDecisions"] = decisions
+        new_state["timeTiebreakPreference"] = decision
+        new_state["timeTiebreakResolvedFingerprint"] = normalized_fingerprint
+        new_state["timeTiebreakResolvedDecision"] = decision
+        payload["timeTiebreakDecision"] = decision
+        payload["timeTiebreakFingerprint"] = normalized_fingerprint
+        snapshot_required = True
+
+    elif ctype == "SET_PREV_ROUNDS_TIEBREAK_DECISION":
+        decision = cmd.get("prevRoundsTiebreakDecision")
+        fingerprint = cmd.get("prevRoundsTiebreakFingerprint")
+        raw_order = cmd.get("prevRoundsTiebreakOrder")
+        raw_ranks_map = cmd.get("prevRoundsTiebreakRanksByName")
+        if decision not in {"yes", "no"}:
+            raise ValueError(
+                "SET_PREV_ROUNDS_TIEBREAK_DECISION requires prevRoundsTiebreakDecision in {'yes','no'}"
+            )
+        if not isinstance(fingerprint, str) or not fingerprint.strip():
+            raise ValueError(
+                "SET_PREV_ROUNDS_TIEBREAK_DECISION requires non-empty prevRoundsTiebreakFingerprint"
+            )
+        normalized_fingerprint = fingerprint.strip()
+        normalized_order: list[str] = []
+        if raw_order is not None:
+            if not isinstance(raw_order, list):
+                raise ValueError(
+                    "SET_PREV_ROUNDS_TIEBREAK_DECISION prevRoundsTiebreakOrder must be a list"
+                )
+            for item in raw_order:
+                if not isinstance(item, str):
+                    continue
+                name = item.strip()
+                if not name:
+                    continue
+                if name in normalized_order:
+                    continue
+                normalized_order.append(name)
+        normalized_ranks_map: dict[str, int] = {}
+        if raw_ranks_map is not None:
+            if not isinstance(raw_ranks_map, dict):
+                raise ValueError(
+                    "SET_PREV_ROUNDS_TIEBREAK_DECISION prevRoundsTiebreakRanksByName must be an object"
+                )
+            for raw_name, raw_rank in raw_ranks_map.items():
+                if not isinstance(raw_name, str):
+                    continue
+                name = raw_name.strip()
+                if not name:
+                    continue
+                if isinstance(raw_rank, bool) or not isinstance(raw_rank, int) or raw_rank <= 0:
+                    raise ValueError(
+                        "SET_PREV_ROUNDS_TIEBREAK_DECISION prevRoundsTiebreakRanksByName values must be positive integers"
+                    )
+                normalized_ranks_map[name] = int(raw_rank)
+
+        decisions = new_state.get("prevRoundsTiebreakDecisions")
+        if not isinstance(decisions, dict):
+            decisions = {}
+        decisions[normalized_fingerprint] = decision
+        new_state["prevRoundsTiebreakDecisions"] = decisions
+
+        orders = new_state.get("prevRoundsTiebreakOrders")
+        if not isinstance(orders, dict):
+            orders = {}
+        if decision == "yes" and normalized_order:
+            orders[normalized_fingerprint] = normalized_order
+        else:
+            orders.pop(normalized_fingerprint, None)
+        new_state["prevRoundsTiebreakOrders"] = orders
+
+        ranks_map = new_state.get("prevRoundsTiebreakRanks")
+        if not isinstance(ranks_map, dict):
+            ranks_map = {}
+        if decision == "yes" and normalized_ranks_map:
+            ranks_map[normalized_fingerprint] = normalized_ranks_map
+        else:
+            ranks_map.pop(normalized_fingerprint, None)
+        new_state["prevRoundsTiebreakRanks"] = ranks_map
+
+        new_state["prevRoundsTiebreakPreference"] = decision
+        new_state["prevRoundsTiebreakResolvedFingerprint"] = normalized_fingerprint
+        new_state["prevRoundsTiebreakResolvedDecision"] = decision
+        payload["prevRoundsTiebreakDecision"] = decision
+        payload["prevRoundsTiebreakFingerprint"] = normalized_fingerprint
+        payload["prevRoundsTiebreakOrder"] = normalized_order
+        payload["prevRoundsTiebreakRanksByName"] = normalized_ranks_map
+        snapshot_required = True
+
     elif ctype == "RESET_PARTIAL":
         # Selective reset: allows admin to reset specific aspects without full RESET_BOX
         reset_timer = bool(cmd.get("resetTimer"))
@@ -531,6 +654,14 @@ def _apply_transition(state: Dict[str, Any], cmd: Dict[str, Any]) -> CommandOutc
             new_state["scores"] = {}
             new_state["times"] = {}
             new_state["lastRegisteredTime"] = None
+            new_state["timeTiebreakDecisions"] = {}
+            new_state["timeTiebreakResolvedFingerprint"] = None
+            new_state["timeTiebreakResolvedDecision"] = None
+            new_state["prevRoundsTiebreakDecisions"] = {}
+            new_state["prevRoundsTiebreakOrders"] = {}
+            new_state["prevRoundsTiebreakRanks"] = {}
+            new_state["prevRoundsTiebreakResolvedFingerprint"] = None
+            new_state["prevRoundsTiebreakResolvedDecision"] = None
 
             competitors = new_state.get("competitors")
             if isinstance(competitors, list):
@@ -584,6 +715,16 @@ def _apply_transition(state: Dict[str, Any], cmd: Dict[str, Any]) -> CommandOutc
         new_state["categorie"] = ""
         new_state["timerPreset"] = None
         new_state["timerPresetSec"] = None
+        new_state["timeTiebreakPreference"] = None
+        new_state["timeTiebreakResolvedFingerprint"] = None
+        new_state["timeTiebreakResolvedDecision"] = None
+        new_state["timeTiebreakDecisions"] = {}
+        new_state["prevRoundsTiebreakPreference"] = None
+        new_state["prevRoundsTiebreakResolvedFingerprint"] = None
+        new_state["prevRoundsTiebreakResolvedDecision"] = None
+        new_state["prevRoundsTiebreakDecisions"] = {}
+        new_state["prevRoundsTiebreakOrders"] = {}
+        new_state["prevRoundsTiebreakRanks"] = {}
         new_state["sessionId"] = str(uuid.uuid4())
         snapshot_required = True
 

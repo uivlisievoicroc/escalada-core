@@ -364,3 +364,148 @@ def test_submit_score_ignores_empty_idx_when_competitor_present():
     assert outcome.state["scores"]["A"][0] == 9.1
     assert outcome.state["times"]["A"][0] == 11.7
     assert outcome.state["currentClimber"] == "B"
+
+
+def test_set_time_tiebreak_decision_persists_state_fields():
+    state = default_state("sid-tb")
+    outcome = apply_command(
+        state,
+        {
+            "type": "SET_TIME_TIEBREAK_DECISION",
+            "timeTiebreakDecision": "yes",
+            "timeTiebreakFingerprint": "box:0|route:1|tie:alice,bob",
+        },
+    )
+    assert outcome.snapshot_required
+    assert outcome.state["timeTiebreakPreference"] == "yes"
+    assert outcome.state["timeTiebreakResolvedDecision"] == "yes"
+    assert (
+        outcome.state["timeTiebreakResolvedFingerprint"]
+        == "box:0|route:1|tie:alice,bob"
+    )
+    assert outcome.state["timeTiebreakDecisions"] == {
+        "box:0|route:1|tie:alice,bob": "yes"
+    }
+
+
+def test_set_time_tiebreak_decision_keeps_previous_fingerprint_decisions():
+    state = default_state("sid-tb-map")
+    first = apply_command(
+        state,
+        {
+            "type": "SET_TIME_TIEBREAK_DECISION",
+            "timeTiebreakDecision": "yes",
+            "timeTiebreakFingerprint": "tb3:first",
+        },
+    )
+    second = apply_command(
+        first.state,
+        {
+            "type": "SET_TIME_TIEBREAK_DECISION",
+            "timeTiebreakDecision": "no",
+            "timeTiebreakFingerprint": "tb3:second",
+        },
+    )
+    assert second.state["timeTiebreakDecisions"] == {
+        "tb3:first": "yes",
+        "tb3:second": "no",
+    }
+
+
+def test_set_prev_rounds_tiebreak_decision_persists_state_fields():
+    state = default_state("sid-prev")
+    outcome = apply_command(
+        state,
+        {
+            "type": "SET_PREV_ROUNDS_TIEBREAK_DECISION",
+            "prevRoundsTiebreakDecision": "yes",
+            "prevRoundsTiebreakFingerprint": "tb3:prev:first",
+            "prevRoundsTiebreakOrder": ["Alice"],
+        },
+    )
+    assert outcome.snapshot_required
+    assert outcome.state["prevRoundsTiebreakPreference"] == "yes"
+    assert outcome.state["prevRoundsTiebreakResolvedDecision"] == "yes"
+    assert outcome.state["prevRoundsTiebreakResolvedFingerprint"] == "tb3:prev:first"
+    assert outcome.state["prevRoundsTiebreakDecisions"] == {"tb3:prev:first": "yes"}
+    assert outcome.state["prevRoundsTiebreakOrders"] == {"tb3:prev:first": ["Alice"]}
+
+
+def test_set_prev_rounds_tiebreak_decision_no_clears_order_for_fingerprint():
+    state = default_state("sid-prev-clear")
+    apply_command(
+        state,
+        {
+            "type": "SET_PREV_ROUNDS_TIEBREAK_DECISION",
+            "prevRoundsTiebreakDecision": "yes",
+            "prevRoundsTiebreakFingerprint": "tb3:prev:first",
+            "prevRoundsTiebreakOrder": ["Alice"],
+        },
+    )
+    outcome = apply_command(
+        state,
+        {
+            "type": "SET_PREV_ROUNDS_TIEBREAK_DECISION",
+            "prevRoundsTiebreakDecision": "no",
+            "prevRoundsTiebreakFingerprint": "tb3:prev:first",
+        },
+    )
+    assert outcome.state["prevRoundsTiebreakDecisions"]["tb3:prev:first"] == "no"
+    assert outcome.state["prevRoundsTiebreakOrders"].get("tb3:prev:first") is None
+
+
+def test_set_prev_rounds_tiebreak_decision_with_ranks_map_persists_per_fingerprint():
+    state = default_state("sid-prev-ranks")
+    outcome = apply_command(
+        state,
+        {
+            "type": "SET_PREV_ROUNDS_TIEBREAK_DECISION",
+            "prevRoundsTiebreakDecision": "yes",
+            "prevRoundsTiebreakFingerprint": "tb3:prev:ranks",
+            "prevRoundsTiebreakRanksByName": {"Alice": 1, "Bob": 2, "Cara": 2},
+        },
+    )
+    assert outcome.state["prevRoundsTiebreakDecisions"]["tb3:prev:ranks"] == "yes"
+    assert outcome.state["prevRoundsTiebreakRanks"]["tb3:prev:ranks"] == {
+        "Alice": 1,
+        "Bob": 2,
+        "Cara": 2,
+    }
+
+
+def test_set_prev_rounds_tiebreak_no_clears_ranks_map_for_fingerprint():
+    state = default_state("sid-prev-ranks-clear")
+    apply_command(
+        state,
+        {
+            "type": "SET_PREV_ROUNDS_TIEBREAK_DECISION",
+            "prevRoundsTiebreakDecision": "yes",
+            "prevRoundsTiebreakFingerprint": "tb3:prev:ranks",
+            "prevRoundsTiebreakRanksByName": {"Alice": 1, "Bob": 2},
+        },
+    )
+    outcome = apply_command(
+        state,
+        {
+            "type": "SET_PREV_ROUNDS_TIEBREAK_DECISION",
+            "prevRoundsTiebreakDecision": "no",
+            "prevRoundsTiebreakFingerprint": "tb3:prev:ranks",
+        },
+    )
+    assert outcome.state["prevRoundsTiebreakRanks"].get("tb3:prev:ranks") is None
+
+
+def test_validation_rejects_tiebreak_command_without_decision_or_fingerprint():
+    try:
+        ValidatedCmd(boxId=1, type="SET_TIME_TIEBREAK_DECISION")
+        assert False, "Expected validation error"
+    except Exception as exc:
+        assert "timeTiebreakDecision" in str(exc) or "timeTiebreakFingerprint" in str(exc)
+
+
+def test_validation_rejects_prev_rounds_tiebreak_without_decision_or_fingerprint():
+    try:
+        ValidatedCmd(boxId=1, type="SET_PREV_ROUNDS_TIEBREAK_DECISION")
+        assert False, "Expected validation error"
+    except Exception as exc:
+        assert "prevRoundsTiebreakDecision" in str(exc) or "prevRoundsTiebreakFingerprint" in str(exc)
