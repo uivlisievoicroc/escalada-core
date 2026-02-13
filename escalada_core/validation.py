@@ -73,6 +73,12 @@ class ValidatedCmd(BaseModel):
     prevRoundsTiebreakFingerprint: Optional[str] = Field(
         None, min_length=1, max_length=256, description="Deterministic fingerprint for tie event"
     )
+    prevRoundsTiebreakLineageKey: Optional[str] = Field(
+        None,
+        min_length=1,
+        max_length=256,
+        description="Stable lineage key for evolving ties on the same route/performance",
+    )
     prevRoundsTiebreakOrder: Optional[List[str]] = Field(
         None, description="Optional ordered competitor names for previous-rounds tiebreak"
     )
@@ -233,6 +239,16 @@ class ValidatedCmd(BaseModel):
                 )
             cleaned[raw_name.strip()] = int(raw_rank)
         return cleaned
+
+    @field_validator("prevRoundsTiebreakLineageKey")
+    @classmethod
+    def validate_prev_rounds_lineage_key(cls, v: Optional[str]) -> Optional[str]:
+        if v is None:
+            return v
+        normalized = v.strip()
+        if not normalized:
+            raise ValueError("prevRoundsTiebreakLineageKey cannot be empty")
+        return normalized
 
     @field_validator("timerPreset")
     @classmethod

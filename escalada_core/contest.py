@@ -110,6 +110,7 @@ def default_state(session_id: str | None = None) -> Dict[str, Any]:
         "prevRoundsTiebreakDecisions": {},
         "prevRoundsTiebreakOrders": {},
         "prevRoundsTiebreakRanks": {},
+        "prevRoundsTiebreakLineageRanks": {},
         "sessionId": session_id or str(uuid.uuid4()),
         "boxVersion": 0,
     }
@@ -346,6 +347,16 @@ def _apply_transition(state: Dict[str, Any], cmd: Dict[str, Any]) -> CommandOutc
         new_state["holdCount"] = 0.0
         new_state["lastRegisteredTime"] = None
         new_state["remaining"] = None
+        # Tiebreak memory is route-scoped; starting/restarting a route resets it.
+        new_state["timeTiebreakDecisions"] = {}
+        new_state["timeTiebreakResolvedFingerprint"] = None
+        new_state["timeTiebreakResolvedDecision"] = None
+        new_state["prevRoundsTiebreakDecisions"] = {}
+        new_state["prevRoundsTiebreakOrders"] = {}
+        new_state["prevRoundsTiebreakRanks"] = {}
+        new_state["prevRoundsTiebreakLineageRanks"] = {}
+        new_state["prevRoundsTiebreakResolvedFingerprint"] = None
+        new_state["prevRoundsTiebreakResolvedDecision"] = None
         # Score preservation logic for multi-route contests:
         # - routeIndex == 1: Fresh contest start, clear all scores/times
         # - routeIndex > 1: Preserve scores/times from previous routes (arrays indexed by route)
@@ -353,14 +364,6 @@ def _apply_transition(state: Dict[str, Any], cmd: Dict[str, Any]) -> CommandOutc
         if incoming_route_index == 1:
             new_state["scores"] = {}
             new_state["times"] = {}
-            new_state["timeTiebreakDecisions"] = {}
-            new_state["timeTiebreakResolvedFingerprint"] = None
-            new_state["timeTiebreakResolvedDecision"] = None
-            new_state["prevRoundsTiebreakDecisions"] = {}
-            new_state["prevRoundsTiebreakOrders"] = {}
-            new_state["prevRoundsTiebreakRanks"] = {}
-            new_state["prevRoundsTiebreakResolvedFingerprint"] = None
-            new_state["prevRoundsTiebreakResolvedDecision"] = None
         else:
             if not isinstance(new_state.get("scores"), dict):
                 new_state["scores"] = {}
@@ -550,6 +553,7 @@ def _apply_transition(state: Dict[str, Any], cmd: Dict[str, Any]) -> CommandOutc
         fingerprint = cmd.get("prevRoundsTiebreakFingerprint")
         raw_order = cmd.get("prevRoundsTiebreakOrder")
         raw_ranks_map = cmd.get("prevRoundsTiebreakRanksByName")
+        raw_lineage_key = cmd.get("prevRoundsTiebreakLineageKey")
         if decision not in {"yes", "no"}:
             raise ValueError(
                 "SET_PREV_ROUNDS_TIEBREAK_DECISION requires prevRoundsTiebreakDecision in {'yes','no'}"
@@ -559,6 +563,13 @@ def _apply_transition(state: Dict[str, Any], cmd: Dict[str, Any]) -> CommandOutc
                 "SET_PREV_ROUNDS_TIEBREAK_DECISION requires non-empty prevRoundsTiebreakFingerprint"
             )
         normalized_fingerprint = fingerprint.strip()
+        normalized_lineage_key: str | None = None
+        if raw_lineage_key is not None:
+            if not isinstance(raw_lineage_key, str) or not raw_lineage_key.strip():
+                raise ValueError(
+                    "SET_PREV_ROUNDS_TIEBREAK_DECISION prevRoundsTiebreakLineageKey must be a non-empty string"
+                )
+            normalized_lineage_key = raw_lineage_key.strip()
         normalized_order: list[str] = []
         if raw_order is not None:
             if not isinstance(raw_order, list):
@@ -615,12 +626,25 @@ def _apply_transition(state: Dict[str, Any], cmd: Dict[str, Any]) -> CommandOutc
         else:
             ranks_map.pop(normalized_fingerprint, None)
         new_state["prevRoundsTiebreakRanks"] = ranks_map
+        lineage_ranks = new_state.get("prevRoundsTiebreakLineageRanks")
+        if not isinstance(lineage_ranks, dict):
+            lineage_ranks = {}
+        if decision == "yes" and normalized_lineage_key and normalized_ranks_map:
+            existing_lineage = lineage_ranks.get(normalized_lineage_key)
+            if not isinstance(existing_lineage, dict):
+                existing_lineage = {}
+            merged_lineage = dict(existing_lineage)
+            merged_lineage.update(normalized_ranks_map)
+            lineage_ranks[normalized_lineage_key] = merged_lineage
+        new_state["prevRoundsTiebreakLineageRanks"] = lineage_ranks
 
         new_state["prevRoundsTiebreakPreference"] = decision
         new_state["prevRoundsTiebreakResolvedFingerprint"] = normalized_fingerprint
         new_state["prevRoundsTiebreakResolvedDecision"] = decision
         payload["prevRoundsTiebreakDecision"] = decision
         payload["prevRoundsTiebreakFingerprint"] = normalized_fingerprint
+        if normalized_lineage_key:
+            payload["prevRoundsTiebreakLineageKey"] = normalized_lineage_key
         payload["prevRoundsTiebreakOrder"] = normalized_order
         payload["prevRoundsTiebreakRanksByName"] = normalized_ranks_map
         snapshot_required = True
@@ -660,6 +684,7 @@ def _apply_transition(state: Dict[str, Any], cmd: Dict[str, Any]) -> CommandOutc
             new_state["prevRoundsTiebreakDecisions"] = {}
             new_state["prevRoundsTiebreakOrders"] = {}
             new_state["prevRoundsTiebreakRanks"] = {}
+            new_state["prevRoundsTiebreakLineageRanks"] = {}
             new_state["prevRoundsTiebreakResolvedFingerprint"] = None
             new_state["prevRoundsTiebreakResolvedDecision"] = None
 
@@ -725,6 +750,7 @@ def _apply_transition(state: Dict[str, Any], cmd: Dict[str, Any]) -> CommandOutc
         new_state["prevRoundsTiebreakDecisions"] = {}
         new_state["prevRoundsTiebreakOrders"] = {}
         new_state["prevRoundsTiebreakRanks"] = {}
+        new_state["prevRoundsTiebreakLineageRanks"] = {}
         new_state["sessionId"] = str(uuid.uuid4())
         snapshot_required = True
 

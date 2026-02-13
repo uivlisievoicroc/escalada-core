@@ -473,6 +473,36 @@ def test_set_prev_rounds_tiebreak_decision_with_ranks_map_persists_per_fingerpri
     }
 
 
+def test_set_prev_rounds_tiebreak_decision_with_lineage_merges_partial_ranks():
+    state = default_state("sid-prev-lineage")
+    first = apply_command(
+        state,
+        {
+            "type": "SET_PREV_ROUNDS_TIEBREAK_DECISION",
+            "prevRoundsTiebreakDecision": "yes",
+            "prevRoundsTiebreakFingerprint": "tb3:prev:first",
+            "prevRoundsTiebreakLineageKey": "tb-lineage:route1:hold30",
+            "prevRoundsTiebreakRanksByName": {"Alice": 1, "Bob": 2},
+        },
+    )
+    second = apply_command(
+        first.state,
+        {
+            "type": "SET_PREV_ROUNDS_TIEBREAK_DECISION",
+            "prevRoundsTiebreakDecision": "yes",
+            "prevRoundsTiebreakFingerprint": "tb3:prev:expanded",
+            "prevRoundsTiebreakLineageKey": "tb-lineage:route1:hold30",
+            "prevRoundsTiebreakRanksByName": {"Cara": 3},
+        },
+    )
+    assert second.state["prevRoundsTiebreakLineageRanks"]["tb-lineage:route1:hold30"] == {
+        "Alice": 1,
+        "Bob": 2,
+        "Cara": 3,
+    }
+    assert second.cmd_payload["prevRoundsTiebreakLineageKey"] == "tb-lineage:route1:hold30"
+
+
 def test_set_prev_rounds_tiebreak_no_clears_ranks_map_for_fingerprint():
     state = default_state("sid-prev-ranks-clear")
     apply_command(
@@ -509,3 +539,28 @@ def test_validation_rejects_prev_rounds_tiebreak_without_decision_or_fingerprint
         assert False, "Expected validation error"
     except Exception as exc:
         assert "prevRoundsTiebreakDecision" in str(exc) or "prevRoundsTiebreakFingerprint" in str(exc)
+
+
+def test_init_route_resets_prev_rounds_lineage_ranks():
+    state = default_state("sid-reset-lineage")
+    apply_command(
+        state,
+        {
+            "type": "SET_PREV_ROUNDS_TIEBREAK_DECISION",
+            "prevRoundsTiebreakDecision": "yes",
+            "prevRoundsTiebreakFingerprint": "tb3:prev:first",
+            "prevRoundsTiebreakLineageKey": "tb-lineage:route1:hold30",
+            "prevRoundsTiebreakRanksByName": {"Alice": 1, "Bob": 2},
+        },
+    )
+    outcome = apply_command(
+        state,
+        {
+            "type": "INIT_ROUTE",
+            "boxId": 1,
+            "routeIndex": 2,
+            "holdsCount": 40,
+            "competitors": [{"nume": "Alice"}, {"nume": "Bob"}],
+        },
+    )
+    assert outcome.state["prevRoundsTiebreakLineageRanks"] == {}

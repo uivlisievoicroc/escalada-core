@@ -73,6 +73,8 @@ class ContestState(TypedDict, total=False):
     # Manual previous-rounds rank map keyed by tie fingerprint.
     # Example: {"tb3:...": {"A": 1, "B": 2, "C": 2}}
     prevRoundsTiebreakRanks: dict[str, dict[str, int]]
+    # Stable previous-rounds ranks keyed by logical tie lineage (route+performance).
+    prevRoundsTiebreakLineageRanks: dict[str, dict[str, int]]
 
 
 class CommandPayload(TypedDict, total=False):
@@ -115,6 +117,7 @@ class CommandPayload(TypedDict, total=False):
     # SET_PREV_ROUNDS_TIEBREAK_DECISION
     prevRoundsTiebreakDecision: Optional[str]
     prevRoundsTiebreakFingerprint: Optional[str]
+    prevRoundsTiebreakLineageKey: Optional[str]
     prevRoundsTiebreakOrder: Optional[List[str]]
     prevRoundsTiebreakRanksByName: Optional[dict[str, int]]
     

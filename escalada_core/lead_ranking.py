@@ -43,6 +43,7 @@ class TieContext:
     fingerprint: str
     athletes: tuple[Athlete, ...]
     performance: LeadResult
+    lineage_key: str | None = None
 
 
 @dataclass(frozen=True)
@@ -82,6 +83,10 @@ class TieEvent:
     members: tuple[RankingRow, ...]
     status: Literal["pending", "resolved", "error"]
     detail: str | None = None
+    lineage_key: str | None = None
+    known_prev_ranks_by_athlete: dict[str, int] | None = None
+    missing_prev_rounds_athlete_ids: tuple[str, ...] | None = None
+    requires_prev_rounds_input: bool = False
 
 
 @dataclass(frozen=True)
@@ -163,6 +168,20 @@ def _build_tie_fingerprint(
     return _fingerprint(payload)
 
 
+def _build_lineage_key(*, round_name: str, result: LeadResult) -> str:
+    payload = {
+        "round": round_name,
+        "context": "overall",
+        "performance": {
+            "topped": bool(result.topped),
+            "hold": int(result.hold),
+            "plus": bool(result.plus and not result.topped),
+        },
+    }
+    raw = json.dumps(payload, ensure_ascii=False, sort_keys=True, separators=(",", ":"))
+    return f"tb-lineage:{hashlib.sha1(raw.encode('utf-8')).hexdigest()}"
+
+
 def _default_pending_decision() -> TieBreakDecision:
     return TieBreakDecision(choice="pending", previous_ranks_by_athlete=None)
 
@@ -192,10 +211,9 @@ def _validate_previous_ranks(
     if not isinstance(ranks_by_athlete, dict) or not ranks_by_athlete:
         return False, "missing_previous_rounds_ranks"
     expected_ids = {item.athlete.id for item in members}
-    provided_ids = set(ranks_by_athlete.keys())
-    if provided_ids != expected_ids:
-        return False, "invalid_previous_rounds_ranks_members"
     for athlete_id, rank_val in ranks_by_athlete.items():
+        if athlete_id not in expected_ids:
+            return False, f"invalid_previous_rounds_rank_member:{athlete_id}"
         if not isinstance(rank_val, int) or isinstance(rank_val, bool) or rank_val <= 0:
             return False, f"invalid_previous_rounds_rank:{athlete_id}"
     return True, None
@@ -390,6 +408,7 @@ def _resolve_group(
         affects_podium=affects_podium,
         members=members,
     )
+    lineage_key = _build_lineage_key(round_name=round_name, result=members[0].result)
     ctx = TieContext(
         round_name=round_name,
         stage="previous_rounds",
@@ -397,6 +416,7 @@ def _resolve_group(
         rank_end=rank_end,
         affects_podium=affects_podium,
         fingerprint=fp,
+        lineage_key=lineage_key,
         athletes=tuple(item.athlete for item in members),
         performance=members[0].result,
     )
@@ -413,6 +433,10 @@ def _resolve_group(
                 members=tuple(_to_ranking_row(item, rank_start) for item in members),
                 status="pending",
                 detail="previous_rounds_pending",
+                lineage_key=lineage_key,
+                known_prev_ranks_by_athlete={},
+                missing_prev_rounds_athlete_ids=tuple(sorted(item.athlete.id for item in members)),
+                requires_prev_rounds_input=True,
             )
         )
         return [_TieChunk(items=list(members))], not affects_podium
@@ -442,12 +466,44 @@ def _resolve_group(
                 members=tuple(_to_ranking_row(item, rank_start) for item in members),
                 status="error",
                 detail=reason,
+                lineage_key=lineage_key,
+                known_prev_ranks_by_athlete={},
+                missing_prev_rounds_athlete_ids=tuple(sorted(item.athlete.id for item in members)),
+                requires_prev_rounds_input=True,
             )
         )
         return [_TieChunk(items=list(members))], False if affects_podium else True
 
     ranks_by_athlete = decision.previous_ranks_by_athlete or {}
-    partitions = _partition_by_prev_ranks(members, ranks_by_athlete)
+    known_members: list[_ResolvedItem] = []
+    missing_members: list[_ResolvedItem] = []
+    for item in members:
+        if item.athlete.id in ranks_by_athlete:
+            known_members.append(item)
+        else:
+            missing_members.append(item)
+    if not known_members:
+        tie_events.append(
+            TieEvent(
+                fingerprint=fp,
+                stage="previous_rounds",
+                rank_start=rank_start,
+                rank_end=rank_end,
+                affects_podium=affects_podium,
+                members=tuple(_to_ranking_row(item, rank_start) for item in members),
+                status="pending",
+                detail="previous_rounds_missing_members",
+                lineage_key=lineage_key,
+                known_prev_ranks_by_athlete={},
+                missing_prev_rounds_athlete_ids=tuple(
+                    sorted(item.athlete.id for item in missing_members)
+                ),
+                requires_prev_rounds_input=True,
+            )
+        )
+        return [_TieChunk(items=list(members))], False
+
+    partitions = _partition_by_prev_ranks(known_members, ranks_by_athlete)
     chunks: list[_TieChunk] = []
     all_resolved = True
     consumed = 0
@@ -472,6 +528,31 @@ def _resolve_group(
         )
         chunks.extend(time_chunks)
         all_resolved = all_resolved and resolved
+    if missing_members:
+        missing_members_sorted = sorted(missing_members, key=_stable_athlete_sort_key)
+        chunks.append(_TieChunk(items=list(missing_members_sorted)))
+        tie_events.append(
+            TieEvent(
+                fingerprint=fp,
+                stage="previous_rounds",
+                rank_start=rank_start,
+                rank_end=rank_end,
+                affects_podium=affects_podium,
+                members=tuple(_to_ranking_row(item, rank_start) for item in members),
+                status="pending",
+                detail="previous_rounds_missing_members",
+                lineage_key=lineage_key,
+                known_prev_ranks_by_athlete={
+                    item.athlete.id: int(ranks_by_athlete[item.athlete.id])
+                    for item in known_members
+                },
+                missing_prev_rounds_athlete_ids=tuple(
+                    sorted(item.athlete.id for item in missing_members_sorted)
+                ),
+                requires_prev_rounds_input=True,
+            )
+        )
+        return chunks, False
     return chunks, all_resolved
 
 
